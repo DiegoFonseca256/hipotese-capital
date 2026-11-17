@@ -8,7 +8,7 @@ O projeto automatiza o fluxo completo de pesquisa de ações — da coleta de da
 
 1. **Coleta de dados** — Indicadores fundamentalistas (P/L, ROE, Dividend Yield, Beta, etc.), dados cadastrais e notícias relevantes são obtidos via `yfinance` e `NewsAPI`.
 2. **Armazenamento SQL** — Todos os dados coletados são persistidos em um banco de dados SQL local (`database.py`), permitindo consultas rápidas, histórico de análises e reutilização entre execuções sem necessidade de reprocessamento.
-3. **Análise com LLM** — Um modelo rodado na Groq (Llama 3) recebe os dados estruturados e produz um relatório com avaliação do negócio, interpretação dos indicadores, classificação de sentimento das notícias e perguntas para investigação adicional.
+3. **Análise com LLM** — Um modelo rodado na Groq (gpt-oss-120b) recebe os dados estruturados e produz um relatório com avaliação do negócio, interpretação dos indicadores, classificação de sentimento das notícias e perguntas para investigação adicional.
 4. **Dashboard interativo** — Interface Streamlit com métricas, gráficos de preço históricos, cards de notícias com imagens e análise da IA consolidada.
 
 ## Arquitetura
@@ -38,7 +38,7 @@ Crie um arquivo `.env` na raiz do projeto:
 ```
 GROQ_API_KEY=sua_chave_aqui
 NEWS_API_KEY=sua_chave_aqui        # opcional
-LLM_MODEL=llama-3.3-70b-versatile  # modelo padrão
+LLM_MODEL=openai/gpt-oss-120b      # modelo padrão
 ```
 
 ## Uso
@@ -68,6 +68,6 @@ streamlit run dashboard.py
 
 - **Dados:** `yfinance`, `requests`, `pandas`
 - **Banco de dados:** SQL para armazenamento e persistência dos dados coletados (`database.py`)
-- **IA:** `groq` (Llama 3), `tenacity` (retry com backoff exponencial)
+- **IA:** `groq` (gpt-oss-120b), `tenacity` (retry com backoff exponencial)
 - **Dashboard:** `streamlit`, `plotly`
 - **Config:** `python-dotenv`

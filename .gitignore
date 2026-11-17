@@ -4,3 +4,5 @@ __pycache__/
 observações
 .env
 hipotese_capital.db
+hipotese_capital.db-shm
+hipotese_capital.db-wal

@@ -21,13 +21,14 @@ logger = logging.getLogger(__name__)
 # Configuração
 # ---------------------------------------------------------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-LLM_MODEL    = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")  # melhor qualidade
+LLM_MODEL    = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
 LLM_RETRIES  = int(os.getenv("LLM_MAX_RETRIES", "3"))
 
 # Modelos disponíveis no Groq (free tier):
-#   llama-3.3-70b-versatile  → melhor qualidade, ~6k tokens/min  ← recomendado
-#   llama-3.1-8b-instant     → mais rápido, limite maior
-#   mixtral-8x7b-32768       → bom para textos longos
+#   openai/gpt-oss-120b  → melhor qualidade  ← recomendado
+#   openai/gpt-oss-20b   → mais rápido
+#   qwen/qwen3.8-27b     → alternativa
+# (os modelos Llama 3 foram descontinuados na Groq)
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
@@ -163,7 +164,7 @@ def construir_prompt(ticker: str) -> str:
         dados = conn.execute(query, (ticker,)).fetchone()
         
         if not dados:
-            return f"Erro: Dados não encontrados para o ticker {ticker}."
+            raise LookupError(f"Dados não encontrados para o ticker {ticker}.")
 
         preco=dados["preco_atual"]
         min_52=dados["min_52"]
@@ -181,20 +182,27 @@ def construir_prompt(ticker: str) -> str:
 
         # 2. Busca as notícias vinculadas a esse ticker
         query_noticias = '''
-            SELECT titulo, sentimento 
-            FROM noticias_historico 
-            WHERE ticker = ? 
+            SELECT titulo, fonte, data_noticia
+            FROM noticias_historico
+            WHERE ticker = ?
             ORDER BY id DESC LIMIT 5
         '''
         noticias = conn.execute(query_noticias, (ticker,)).fetchall()
-        noticias_str = "\n".join([f"- {n['titulo']} (Sentimento: {n['sentimento']})" for n in noticias])
+        noticias_str = "\n".join(
+            f"- [{n['data_noticia']} | {n['fonte']}] {n['titulo']}" for n in noticias
+        ) or "Nenhuma notícia disponível."
 
     ind = {
         "P/L":         _fmt(dados['pl'], "x"),
         "ROE":        _fmt(dados['roe'], "%"),
         "DY":         _fmt(dados['dy'], "%"),
         "M.Cap":      _fmt_grande(dados['market_cap']),
-        "Beta":       _fmt(dados['beta'])
+        "Beta":       _fmt(dados['beta']),
+        "Dív/PL":     _fmt(dados['debtToEquity'], "x"),
+        "FCF":        _fmt_grande(dados['freeCashflow']),
+        "Mg.EBITDA":  _fmt(dados['ebitdaMargins'], "%"),
+        "Mg.Oper":    _fmt(dados['MargemOperacional'], "%"),
+        "Liq.Corr":   _fmt(dados['LiquiCorrente'], "x"),
     }
     ind_str = " | ".join(f"{k}:{v}" for k, v in ind.items() if v != "N/D")
 
@@ -202,15 +210,18 @@ def construir_prompt(ticker: str) -> str:
         f"CONTEXTO: Você é o analista-chefe da Hipótese Capital.\n"
         f"ATIVO: {dados['ticker']} | {dados['nome']} | {dados['setor']}\n"
         f"MODELO DE NEGÓCIO: {str(dados['descricao'])[:400]}\n"
-        f"MERCADO: Preço R${_fmt(dados['preco_atual'])} | MCap: {ind['M.Cap']} | Beta: {ind['Beta']}Range52s: {pos_52s}\n"
+        f"MERCADO: Preço R${_fmt(dados['preco_atual'])} | Variação dia: {_variacao_fmt(dados['variacao_dia'])} | Range52s: {pos_52s}\n"
         f"FUNDAMENTOS: {ind_str}\n"
         f"NOTÍCIAS RECENTES:\n{noticias_str}\n\n"
+        f"As notícias foram buscadas pelo nome e podem incluir homônimos (ex.: 'vale' como verbo, "
+        f"'Vale-transporte'). Classifique TODAS, copiando o título exatamente; use 'irrelevante' "
+        f"para as que não tratam desta empresa e ignore-as na análise.\n\n"
         f"TAREFA: Retorne APENAS um JSON com este formato estrito:\n"
         f"{{\n"
         f'  "resumo_negocio": "2-3 frases sobre o modelo e geração de valor",\n'
         f'  "analise_fundamentos": "análise qualitativa dos indicadores e momento",\n'
         f'  "noticias": [\n'
-        f'    {{"titulo": "título da notícia", "sentimento": "positiva/negativa/neutra"}}\n'
+        f'    {{"titulo": "título da notícia", "sentimento": "positiva/negativa/neutra/irrelevante"}}\n'
         f'  ],\n'
         f'  "perguntas_analista": ["pergunta1", "pergunta2", "pergunta3"]\n'
         f"}}"

@@ -9,6 +9,7 @@ Execução:
 Requisitos:
     pip install streamlit plotly pandas yfinance python-dotenv
 """
+import html as html_lib
 import json
 import os
 
@@ -69,39 +70,48 @@ def coletar_historico(ticker: str, periodo: str = "6mo") -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def renderizar_cards_noticias(ticker: str):
+CORES_SENTIMENTO  = {"positiva": "#22c55e", "negativa": "#ef4444", "neutra": "#94a3b8"}
+LABELS_SENTIMENTO = {"positiva": "Positiva", "negativa": "Negativa", "neutra": "Neutra"}
 
+
+def carregar_noticias(ticker: str, limite: int = 12) -> list:
     with get_conn() as conn:
-        query = "SELECT * FROM noticias_historico WHERE ticker = ? ORDER BY id DESC LIMIT 6"
-        noticias = conn.execute(query, (ticker,)).fetchall()
+        query = "SELECT * FROM noticias_historico WHERE ticker = ? ORDER BY id DESC LIMIT ?"
+        return conn.execute(query, (ticker, limite)).fetchall()
+
+
+def renderizar_cards_noticias(noticias: list):
 
     if not noticias:
-        st.caption("Sem notícias registradas para este ticker.")
+        st.caption("Nenhuma notícia nesta categoria.")
         return
 
-    cores = {"positiva": "#22c55e", "negativa": "#ef4444", "neutra": "#94a3b8"}
-    labels = {"positiva": "Positiva", "negativa": "Negativa", "neutra": "Neutra"}
+    cores = CORES_SENTIMENTO
+    labels = LABELS_SENTIMENTO
     placeholder = "https://placehold.co/400x200/1e293b/94a3b8?text=Sem+imagem"
 
     cards_html = ""
+    def _safe(texto):
+        return html_lib.escape(texto or "", quote=True)
+
     for n in noticias:
-        
+
         cor = cores.get(n['sentimento'], "#94a3b8")
-        label  = labels[n['sentimento']]
-        titulo_safe = n['titulo'].replace('"', "&quot;").replace("'", "&#39;")
-        descr_safe  = n['descricao'].replace('"', "&quot;").replace("'", "&#39;")
+        label  = labels.get(n['sentimento'], "Não classificada")
+        titulo_safe = _safe(n['titulo'])
+        descr_safe  = _safe(n['descricao'])
 
         cards_html += f"""
-        <a href="{n["url"]}" target="_blank" style="text-decoration:none;">
+        <a href="{_safe(n["url"])}" target="_blank" style="text-decoration:none;">
           <div class="card">
             <div class="card-img-wrap">
-              <img src="{n["imagem"]}" onerror="this.src='{n["placeholder"]}'" alt="{n["titulo_safe"]}"/>
+              <img src="{_safe(n["imagem"]) or placeholder}" onerror="this.src='{placeholder}'" alt="{titulo_safe}"/>
               <span class="badge" style="background:{cor}">{label}</span>
             </div>
             <div class="card-body">
               <p class="card-title">{titulo_safe}</p>
               <p class="card-descr">{descr_safe}</p>
-              <p class="card-meta">{n['fonte']} · {n['data']}</p>
+              <p class="card-meta">{_safe(n['fonte'])} · {_safe(n['data_noticia'])}</p>
             </div>
           </div>
         </a>"""
@@ -110,13 +120,21 @@ def renderizar_cards_noticias(ticker: str):
     html = f"""
     <style>
       .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }}
-      .card {{ background: #1e293b; border-radius: 8px; padding: 15px; font-family: sans-serif; }}
-      .card-title {{ font-size: 14px; color: #f1f5f9; font-weight: 600; margin: 8px 0; }}
-      .card-meta {{ font-size: 10px; font-weight: bold; }}
+      .card {{ background: #1e293b; border-radius: 8px; overflow: hidden; font-family: sans-serif; height: 100%; }}
+      .card-img-wrap {{ position: relative; }}
+      .card-img-wrap img {{ width: 100%; height: 130px; object-fit: cover; display: block; }}
+      .badge {{ position: absolute; top: 8px; left: 8px; color: #fff; font-size: 11px; font-weight: 600;
+                padding: 2px 8px; border-radius: 999px; }}
+      .card-body {{ padding: 10px 14px 14px; }}
+      .card-title {{ font-size: 14px; color: #f1f5f9; font-weight: 600; margin: 0 0 6px; }}
+      .card-descr {{ font-size: 12px; color: #cbd5e1; margin: 0 0 8px;
+                     display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }}
+      .card-meta {{ font-size: 10px; font-weight: bold; color: #94a3b8; margin: 0; }}
     </style>
     <div class="grid">{cards_html}</div>"""
-    
-    components.html(html, height=350)
+
+    linhas = (len(noticias) + 2) // 3
+    components.html(html, height=min(linhas, 2) * 330, scrolling=True)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +160,7 @@ with st.sidebar:
             st.sidebar.error("Digite um ticker válido.")
 
     st.divider()
-    if st.button("🔄 Recarregar dados", use_container_width=True):
+    if st.button("🔄 Recarregar dados", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
@@ -240,7 +258,7 @@ with st.expander("📈 Histórico de preços", expanded=True):
             yaxis=dict(showgrid=True, gridcolor="rgba(128,128,128,0.15)"),
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.caption("Histórico não disponível.")
 
@@ -251,8 +269,8 @@ st.divider()
 # ---------------------------------------------------------------------------
 st.markdown("### 🤖 Análise da IA")
 
-resumo  = linha.get("resumo_negocio", "")
-analise = linha.get("analise_fundamentos", "")
+resumo  = linha.get("resumo_llm", "")
+analise = linha.get("analise_llm", "")
 
 if not resumo or pd.isna(resumo):
     st.warning("Análise não disponível. Execute `python main.py` com `GROQ_API_KEY` configurado.")
@@ -268,31 +286,34 @@ else:
     with col_dir:
         st.subheader("❓ Perguntas para investigar")
         try:
-            for i, q in enumerate(json.loads(linha.get("perguntas_json", "[]")), 1):
+            for i, q in enumerate(json.loads(linha.get("perguntas_json") or "[]"), 1):
                 st.warning(f"**{i}.** {q}")
         except (json.JSONDecodeError, TypeError):
             st.caption("Perguntas não disponíveis.")
 
-    # Notícias classificadas em abas
-    st.divider()
-    st.subheader("📰 Notícias classificadas pela IA")
-    try:
-        noticias_llm = json.loads(linha.get("noticias_json", "[]") or "[]")
-    except (json.JSONDecodeError, TypeError):
-        noticias_llm = []
-
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Cards de notícias com foto e link
+# Notícias: cards com foto, separados em abas pelo sentimento dado pela IA
 # ---------------------------------------------------------------------------
-st.subheader("🗞️ Notícias com foto")
+st.subheader("📰 Notícias classificadas pela IA")
 
-try:
-    noticias_raw = json.loads(linha.get("noticias_raw_json", "[]") or "[]")
-    noticias_llm = json.loads(linha.get("noticias_json", "[]]") or "[]")
-except (json.JSONDecodeError, TypeError):
-    noticias_raw = []
-    noticias_llm = []
+noticias = carregar_noticias(ticker)
+descartadas = sum(1 for n in noticias if n["sentimento"] == "irrelevante")
+noticias = [n for n in noticias if n["sentimento"] != "irrelevante"]
+if descartadas:
+    st.caption(f"{descartadas} notícia(s) ocultada(s): a IA indicou que não tratam desta empresa.")
+if not noticias:
+    st.caption("Sem notícias registradas para este ticker.")
+else:
+    grupos = {"Todas": noticias}
+    for chave, label in LABELS_SENTIMENTO.items():
+        grupos[label] = [n for n in noticias if n["sentimento"] == chave]
+    nao_classificadas = [n for n in noticias if n["sentimento"] not in LABELS_SENTIMENTO]
+    if nao_classificadas:
+        grupos["Não classificadas"] = nao_classificadas
 
-renderizar_cards_noticias(ticker)
+    abas = st.tabs([f"{nome} ({len(itens)})" for nome, itens in grupos.items()])
+    for aba, itens in zip(abas, grupos.values()):
+        with aba:
+            renderizar_cards_noticias(itens)
